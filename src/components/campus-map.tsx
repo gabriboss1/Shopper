@@ -18,7 +18,7 @@ export function colorFor(index: number): string {
   return COLORS[index % COLORS.length];
 }
 
-export function CampusMap({ pins, legs }: { pins: MapPin[]; legs: Leg[] }) {
+export function CampusMap({ pins, legs, className = "h-[420px]" }: { pins: MapPin[]; legs: Leg[]; className?: string }) {
   const node = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const pinsRef = useRef(pins);
@@ -91,5 +91,5 @@ export function CampusMap({ pins, legs }: { pins: MapPin[]; legs: Leg[] }) {
     };
   }, [signature]);
 
-  return <div ref={node} className="h-[420px] w-full rounded-xl" />;
+  return <div ref={node} className={`${className} w-full rounded-xl`} />;
 }

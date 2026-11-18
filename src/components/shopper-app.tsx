@@ -141,6 +141,8 @@ export function ShopperApp() {
   }
 
   function add(id: string) {
+    const course = getCourse(id);
+    if (course) setToast(course);
     setIds((current) => (current.includes(id) ? current : [...current, id]));
   }
 
@@ -293,9 +295,9 @@ export function ShopperApp() {
                   <li key={course.id} className={`rounded-lg border p-2 ${conflict || eventHits.length > 0 ? "border-[#9b2335] bg-[#fdf2f3]" : "border-[#eee6d8]"}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <p className="font-medium">
+                        <button type="button" className="text-left font-medium" onClick={() => setToast(course)}>
                           {index + 1}. {course.code}
-                        </p>
+                        </button>
                         <p className="text-sm text-[#3d3832]">{course.title}</p>
                         <p className="text-xs text-[#00356b]">{course.department} · {course.major} · {course.distributional}</p>
                         <p className="text-xs text-[#5c564c]">Capacity unknown</p>
@@ -545,7 +547,7 @@ function CourseToast({ course, onClose }: { course: Course; onClose: () => void 
         ))}
       </ul>
       <div className="mt-2 h-40 overflow-hidden rounded-lg">
-        <CampusMap pins={pins} legs={[]} />
+        <CampusMap pins={pins} legs={[]} className="h-40" />
       </div>
     </div>
   );
