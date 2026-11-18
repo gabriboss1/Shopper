@@ -7,6 +7,7 @@ import { conflictingEvents, formatMeeting, formatMinutes, optimize, parseMinutes
 import { scheduleToIcs } from "@/lib/ics";
 import { colorFor, type MapPin } from "@/components/campus-map";
 import { CasPanel } from "@/components/cas-panel";
+import { DiningPanel } from "@/components/dining-panel";
 
 const CampusMap = dynamic(() => import("@/components/campus-map").then((mod) => mod.CampusMap), {
   ssr: false,
@@ -365,6 +366,7 @@ export function ShopperApp() {
 
         <section className="space-y-4">
           <Week plan={plan} events={events} walkSource={walkSource} />
+          <DiningPanel chosen={plan.chosen} />
           <div className="rounded-xl border border-[#e4dccb] bg-white p-3">
             <h2 className="font-semibold">Campus map</h2>
             <p className="mt-1 text-xs text-[#5c564c]">

@@ -82,10 +82,7 @@ export function sectionOverlapsEvent(section: Section, event: ManualEvent): bool
   });
 }
 
-export function walkingMinutes(from: BuildingId, to: BuildingId): number {
-  if (from === to) return 0;
-  const a = BUILDINGS[from];
-  const b = BUILDINGS[to];
+export function walkingMinutesBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const earth = 6371000;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const dLat = toRad(b.lat - a.lat);
@@ -94,9 +91,15 @@ export function walkingMinutes(from: BuildingId, to: BuildingId): number {
   const lat2 = toRad(b.lat);
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   const meters = 2 * earth * Math.asin(Math.min(1, Math.sqrt(h)));
+  if (meters < 30) return 0;
   const pathFactor = 1.45;
   const metersPerSecond = 1.25;
   return Math.max(1, Math.round((meters * pathFactor) / metersPerSecond / 60));
+}
+
+export function walkingMinutes(from: BuildingId, to: BuildingId): number {
+  if (from === to) return 0;
+  return walkingMinutesBetween(BUILDINGS[from], BUILDINGS[to]);
 }
 
 type Placed = {

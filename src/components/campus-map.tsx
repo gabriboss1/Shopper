@@ -18,15 +18,19 @@ export function colorFor(index: number): string {
   return COLORS[index % COLORS.length];
 }
 
-export function CampusMap({ pins, legs, className = "h-[420px]" }: { pins: MapPin[]; legs: Leg[]; className?: string }) {
+export type MapExtra = { id: string; lat: number; lng: number; label: string; color: string };
+
+export function CampusMap({ pins, legs, className = "h-[420px]", extras = [] }: { pins: MapPin[]; legs: Leg[]; className?: string; extras?: MapExtra[] }) {
   const node = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const pinsRef = useRef(pins);
   const legsRef = useRef(legs);
+  const extrasRef = useRef(extras);
   pinsRef.current = pins;
   legsRef.current = legs;
+  extrasRef.current = extras;
 
-  const signature = pins.map((pin) => pin.id).join(",") + legs.map((leg) => `${leg.day}${leg.from.section.id}${leg.to.section.id}${leg.minutes}`).join(",");
+  const signature = pins.map((pin) => pin.id).join(",") + legs.map((leg) => `${leg.day}${leg.from.section.id}${leg.to.section.id}${leg.minutes}`).join(",") + extras.map((extra) => extra.id).join(",");
 
   useEffect(() => {
     let cancelled = false;
@@ -38,6 +42,7 @@ export function CampusMap({ pins, legs, className = "h-[420px]" }: { pins: MapPi
       if (cancelled || !host) return;
       const pins = pinsRef.current;
       const legs = legsRef.current;
+      const extras = extrasRef.current;
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -76,9 +81,25 @@ export function CampusMap({ pins, legs, className = "h-[420px]" }: { pins: MapPi
           .addTo(map);
       }
 
-      if (pins.length > 0) {
-        const bounds = L.latLngBounds(pins.map((pin) => [BUILDINGS[pin.buildingId].lat, BUILDINGS[pin.buildingId].lng]));
-        map.fitBounds(bounds.pad(0.3));
+      extras.forEach((extra, index) => {
+        const icon = L.divIcon({
+          className: "",
+          html: `<div style="background:${extra.color};color:white;border-radius:999px;width:18px;height:18px;border:2px solid white"></div>`,
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+        });
+        L.marker([extra.lat, extra.lng], { icon }).bindPopup(extra.label).addTo(map);
+        if (index === 1 && extras[0]) {
+          L.polyline([[extras[0].lat, extras[0].lng], [extra.lat, extra.lng]], { color: "#00356b", weight: 3 }).addTo(map);
+        }
+      });
+
+      const points: [number, number][] = [
+        ...pins.map((pin) => [BUILDINGS[pin.buildingId].lat, BUILDINGS[pin.buildingId].lng] as [number, number]),
+        ...extras.map((extra) => [extra.lat, extra.lng] as [number, number]),
+      ];
+      if (points.length > 0) {
+        map.fitBounds(L.latLngBounds(points).pad(0.3));
       }
       mapRef.current = map;
       setTimeout(() => map.invalidateSize(), 0);
