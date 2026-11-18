@@ -1,3 +1,5 @@
+VIDEO: https://drive.google.com/file/d/1BK9AHq-8Y15swjkz5j3cRQgHLXIjEcYm/view?usp=sharing
+
 # Shopper
 
 ![Grokathon proof](docs/grokathon-proof.png)
