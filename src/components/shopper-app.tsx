@@ -8,6 +8,8 @@ import { scheduleToIcs } from "@/lib/ics";
 import { colorFor, type MapPin } from "@/components/campus-map";
 import { CasPanel } from "@/components/cas-panel";
 import { DiningPanel } from "@/components/dining-panel";
+import { SyllabusPanel } from "@/components/syllabus-panel";
+import type { SyllabusAnalysis } from "@/lib/syllabus";
 
 const CampusMap = dynamic(() => import("@/components/campus-map").then((mod) => mod.CampusMap), {
   ssr: false,
@@ -23,6 +25,7 @@ export function ShopperApp() {
   const [department, setDepartment] = useState("All");
   const [ids, setIds] = useState<string[]>([]);
   const [paired, setPaired] = useState(false);
+  const [analyses, setAnalyses] = useState<SyllabusAnalysis[]>([]);
   const [toast, setToast] = useState<Course | null>(null);
   const [walks, setWalks] = useState<Record<string, { minutes: number; source: "google" | "coordinate" }>>({});
   const [ready, setReady] = useState(false);
@@ -304,6 +307,9 @@ export function ShopperApp() {
                         <p className="text-xs text-[#5c564c]">Capacity unknown</p>
                         {chosen ? <p className="text-xs text-[#1f7a4d]">Section {chosen.section.label}: {formatMeeting(chosen.section)}</p> : null}
                         {conflict ? <p className="text-xs font-medium text-[#9b2335]">{conflict.reason} ({walkSource}).</p> : null}
+                        {analyses.find((item) => item.courseId === course.id) ? (
+                          <p className="text-xs">Syllabus fit {analyses.find((item) => item.courseId === course.id)?.score}: {analyses.find((item) => item.courseId === course.id)?.summary}</p>
+                        ) : null}
                         {eventHits.map((event) => (
                           <p key={event.id} className="text-xs font-medium text-[#9b2335]">Conflicts with {event.title}</p>
                         ))}
@@ -367,6 +373,7 @@ export function ShopperApp() {
         <section className="space-y-4">
           <Week plan={plan} events={events} walkSource={walkSource} />
           <DiningPanel chosen={plan.chosen} />
+          <SyllabusPanel paired={paired} list={list} onAnalyses={setAnalyses} />
           <div className="rounded-xl border border-[#e4dccb] bg-white p-3">
             <h2 className="font-semibold">Campus map</h2>
             <p className="mt-1 text-xs text-[#5c564c]">
