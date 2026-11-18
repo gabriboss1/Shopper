@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DINING_HALLS, type Diet } from "@/data/dining";
 import { classOrigin, crowdColor, recommendDining, yaleNow, type YaleClock } from "@/lib/dining";
+import type { CrowdLevel } from "@/data/dining";
 import type { Chosen } from "@/lib/schedule";
 import { CampusMap } from "@/components/campus-map";
 
@@ -15,11 +16,29 @@ export function DiningPanel({ chosen }: { chosen: Chosen[] }) {
   const [closest, setClosest] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [clock, setClock] = useState<YaleClock | null>(null);
+  const [live, setLive] = useState<Record<string, { level: CrowdLevel; label: string }>>({});
   useEffect(() => setClock(yaleNow()), []);
-  const options = useMemo(
-    () => (clock ? recommendDining({ chosen, clock, collegeId, diets, lowCrowd, closest }) : []),
-    [chosen, clock, collegeId, diets, lowCrowd, closest],
-  );
+  useEffect(() => {
+    void fetch("/api/crowd")
+      .then((response) => response.json())
+      .then((body: { readings?: { id: string; level: CrowdLevel; label: string; live?: boolean }[] }) => {
+        const next: Record<string, { level: CrowdLevel; label: string }> = {};
+        for (const row of body.readings ?? []) {
+          if (row.live) next[row.id] = { level: row.level, label: row.label };
+        }
+        setLive(next);
+      })
+      .catch(() => undefined);
+  }, []);
+  const options = useMemo(() => {
+    const ranked = clock ? recommendDining({ chosen, clock, collegeId, diets, lowCrowd, closest }) : [];
+    return ranked
+      .map((option) => {
+        const reading = live[option.hall.id];
+        return reading ? { ...option, crowd: reading.level, crowdLabel: reading.label } : option;
+      })
+      .sort((a, b) => (closest ? a.minutes - b.minutes : a.score - b.score));
+  }, [chosen, clock, collegeId, diets, lowCrowd, closest, live]);
   if (!clock) {
     return (
       <section className="rounded-xl border border-[#e4dccb] bg-white p-3">
