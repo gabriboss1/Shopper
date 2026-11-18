@@ -1,16 +1,24 @@
-import { DEFAULT_LIST, getCourse } from "../src/data/courses";
+import { getCourse } from "../src/data/courses";
 import { scheduleToIcs } from "../src/lib/ics";
-import { optimize, parseMinutes } from "../src/lib/schedule";
+import { optimize, parseMinutes, type ManualEvent } from "../src/lib/schedule";
 
-const list = DEFAULT_LIST.map((id) => getCourse(id)!);
-const plan = optimize(list);
-const ics = scheduleToIcs(plan.chosen, plan.legs, new Date("2026-11-17T15:00:00"));
-if (!ics.includes("BEGIN:VCALENDAR") || !plan.chosen.every((item) => ics.includes(`SUMMARY:Shopper – ${item.course.code}`))) {
-  console.error("missing class events");
+const cpsc = getCourse("cpsc-223")!;
+const psyc = getCourse("psyc-110")!;
+const event: ManualEvent = { id: "orch", title: "Orchestra", day: "Tue", start: "11:35", end: "12:50" };
+const plan = optimize([cpsc, psyc], [], () => 20);
+const ics = scheduleToIcs(
+  plan.chosen,
+  plan.legs,
+  [event],
+  plan.dropped.map((item) => ({ course: item.course, section: item.section })),
+  new Date("2026-11-17T15:00:00"),
+);
+if (!ics.includes("SUMMARY:Shopper – Orchestra")) {
+  console.error("missing commitment");
   process.exit(1);
 }
-if (plan.legs.some((leg) => leg.minutes > 0) && !ics.includes("SUMMARY:Shopper – Walk to ")) {
-  console.error("missing walking buffer");
+if (!ics.includes(`SUMMARY:Shopper – ${plan.chosen[0].course.code}`) || !ics.includes(`SUMMARY:Shopper – ${plan.dropped[0].course.code}`)) {
+  console.error("missing a conflicting course");
   process.exit(1);
 }
 const sample = plan.chosen[0];

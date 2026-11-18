@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 const NOTICE =
   "Your CAS credentials will only be used to access your course information, syllabi, and enrollment/capacity data from Yale systems. They will not be used for any other purpose.";
 
-export function CasPanel() {
+export function CasPanel({ onPaired }: { onPaired?: (paired: boolean) => void }) {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [netid, setNetid] = useState("");
   const [password, setPassword] = useState("");
@@ -26,6 +26,7 @@ export function CasPanel() {
       .then((response) => response.json())
       .then((body: { paired?: boolean; expired?: boolean }) => {
         setPaired(Boolean(body.paired));
+        onPaired?.(Boolean(body.paired));
         setExpired(Boolean(body.expired));
       })
       .catch(() => setMessage("Could not check stored credentials."));
@@ -49,6 +50,7 @@ export function CasPanel() {
       }
       setPassword("");
       setPaired(true);
+      onPaired?.(true);
       setExpired(false);
       setMessage("Stored encrypted on the server. Shopper does not sign in to Yale.");
     } catch {
@@ -67,6 +69,7 @@ export function CasPanel() {
       body: JSON.stringify({ profileId }),
     });
     setPaired(false);
+    onPaired?.(false);
     setPassword("");
     setMessage("CAS credentials removed from this device’s Shopper profile.");
     setBusy(false);
@@ -76,7 +79,11 @@ export function CasPanel() {
     <section className="rounded-xl border border-[#e4dccb] bg-white p-3">
       <h2 className="font-semibold">Pair Yale CAS</h2>
       <p className="mt-2 text-sm">{NOTICE}</p>
-      {paired ? <p className="mt-2 text-sm text-[#1f7a4d]">CAS credentials are stored encrypted. Shopper does not sign in to Yale.</p> : null}
+      {paired ? (
+        <p className="mt-2 rounded-lg bg-[#e5f2ea] px-3 py-2 text-sm font-semibold text-[#1f7a4d]">CAS paired. Credentials are stored encrypted. Shopper does not sign in to Yale.</p>
+      ) : (
+        <p className="mt-2 rounded-lg bg-[#f6efe3] px-3 py-2 text-sm">CAS not paired. Course search stays closed until you store credentials.</p>
+      )}
       {expired ? <p className="mt-2 text-sm text-[#9b2335]">Stored credentials expired after 14 days. Pair again.</p> : null}
       <form onSubmit={save} className="mt-3 space-y-2">
         <label className="block text-sm" htmlFor="netid">

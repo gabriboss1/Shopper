@@ -40,11 +40,63 @@ export type Section = {
   meetings: Meeting[];
 };
 
+export const MAJORS = {
+  CPSC: "Computer Science",
+  MATH: "Mathematics",
+  ECON: "Economics",
+  ENGL: "English",
+  HIST: "History",
+  PSYC: "Psychology",
+  BIOL: "Biology",
+  CHEM: "Chemistry",
+  PHYS: "Physics",
+  PHIL: "Philosophy",
+  PLSC: "Political Science",
+  FREN: "French",
+  SPAN: "Spanish",
+  MUSI: "Music",
+  EEB: "Ecology and Evolutionary Biology",
+  ARCH: "Architecture",
+  EENG: "Electrical Engineering",
+} as const;
+
+export type MajorCode = keyof typeof MAJORS;
+export type Distributional = "WR" | "SO" | "L" | "QR" | "SC" | "HU";
+
+const DISTRIBUTIONALS: Record<string, Distributional> = {
+  "cpsc-223": "QR",
+  "cpsc-201": "QR",
+  "cpsc-323": "QR",
+  "math-120": "QR",
+  "math-225": "QR",
+  "econ-115": "SO",
+  "econ-116": "SO",
+  "engl-114": "WR",
+  "engl-129": "HU",
+  "hist-135": "HU",
+  "hist-202": "HU",
+  "psyc-110": "SO",
+  "psyc-200": "QR",
+  "biol-101": "SC",
+  "chem-161": "SC",
+  "phys-170": "SC",
+  "phil-175": "HU",
+  "plsc-113": "SO",
+  "fren-130": "L",
+  "span-140": "L",
+  "musi-110": "HU",
+  "eeb-220": "SC",
+  "arch-101": "HU",
+  "eeng-200": "SC",
+};
+
 export type Course = {
   id: string;
   code: string;
   title: string;
-  department: string;
+  department: MajorCode;
+  major: string;
+  distributional: Distributional;
   sections: Section[];
 };
 
@@ -66,14 +118,10 @@ function section(
   };
 }
 
-function course(
-  id: string,
-  code: string,
-  title: string,
-  department: string,
-  sections: Section[],
-): Course {
-  return { id, code, title, department, sections };
+function course(id: string, code: string, title: string, department: MajorCode, sections: Section[]): Course {
+  const distributional = DISTRIBUTIONALS[id];
+  if (!distributional || !MAJORS[department]) throw new Error(`Missing major or distributional for ${id}`);
+  return { id, code, title, department, major: MAJORS[department], distributional, sections };
 }
 
 export const COURSES: Course[] = [
@@ -162,8 +210,6 @@ export const COURSES: Course[] = [
     section("eeng-200", "01", "A. Rahman", ["Mon", "Wed", "Fri"], "13:30", "14:20", "becton", "201"),
   ]),
 ];
-
-export const DEFAULT_LIST = ["cpsc-223", "econ-115", "engl-114", "math-120", "psyc-110", "hist-202"];
 
 export function getCourse(id: string): Course | undefined {
   return COURSES.find((course) => course.id === id);

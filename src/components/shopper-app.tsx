@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { DAYS, COURSES, DEFAULT_LIST, getCourse, type Course, type Day } from "@/data/courses";
-import { conflictingEvents, formatMeeting, formatMinutes, optimize, parseMinutes, type ManualEvent, type Optimized } from "@/lib/schedule";
+import { BUILDINGS, DAYS, COURSES, getCourse, type BuildingId, type Course, type Day } from "@/data/courses";
+import { conflictingEvents, formatMeeting, formatMinutes, optimize, parseMinutes, walkingMinutes, type ManualEvent, type Optimized } from "@/lib/schedule";
 import { scheduleToIcs } from "@/lib/ics";
 import { colorFor, type MapPin } from "@/components/campus-map";
 import { CasPanel } from "@/components/cas-panel";
@@ -20,7 +20,10 @@ const HOUR = 46;
 export function ShopperApp() {
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("All");
-  const [ids, setIds] = useState<string[]>(DEFAULT_LIST);
+  const [ids, setIds] = useState<string[]>([]);
+  const [paired, setPaired] = useState(false);
+  const [toast, setToast] = useState<Course | null>(null);
+  const [walks, setWalks] = useState<Record<string, { minutes: number; source: "google" | "coordinate" }>>({});
   const [ready, setReady] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [events, setEvents] = useState<ManualEvent[]>([]);
@@ -30,11 +33,11 @@ export function ShopperApp() {
   const [eventEnd, setEventEnd] = useState("16:30");
   const [eventNote, setEventNote] = useState("");
   const [undo, setUndo] = useState<{ id: string; index: number; code: string } | null>(null);
-  const [openId, setOpenId] = useState<string | null>(null);
   const [shareNote, setShareNote] = useState("");
   const undoTimer = useState<{ id: number | null }>({ id: null })[0];
 
   useEffect(() => {
+    const seeded = ["cpsc-223", "econ-115", "engl-114", "math-120", "psyc-110", "hist-202"].join(",");
     const shared = new URLSearchParams(window.location.search).get("list");
     const sharedIds = shared?.split(",").filter((id) => getCourse(id)) ?? [];
     if (sharedIds.length > 0) {
@@ -44,9 +47,9 @@ export function ShopperApp() {
       if (raw) {
         try {
           const parsed = JSON.parse(raw) as string[];
-          if (Array.isArray(parsed)) setIds(parsed.filter((id) => getCourse(id)));
+          if (Array.isArray(parsed) && parsed.join(",") !== seeded) setIds(parsed.filter((id) => getCourse(id)));
         } catch {
-          /* keep the seeded list */
+          /* start empty */
         }
       }
     }
@@ -74,8 +77,50 @@ export function ShopperApp() {
     () => ids.map((id) => getCourse(id)).filter((course): course is Course => Boolean(course)),
     [ids],
   );
-  const plan = useMemo(() => optimize(list), [list]);
-  const dropped = new Set(plan.dropped.map((course) => course.id));
+  const walkFn = useMemo(() => {
+    return (from: BuildingId, to: BuildingId) => {
+      const key = from < to ? `${from}|${to}` : `${to}|${from}`;
+      return walks[key]?.minutes ?? walkingMinutes(from, to);
+    };
+  }, [walks]);
+  const plan = useMemo(() => optimize(list, events, walkFn), [list, events, walkFn]);
+  const dropped = new Map(plan.dropped.map((item) => [item.course.id, item]));
+  const walkSource = Object.values(walks).some((item) => item.source === "google") ? "Google walking time" : "Coordinate estimate";
+
+  useEffect(() => {
+    const buildings = new Set<BuildingId>();
+    for (const course of list) {
+      for (const section of course.sections) {
+        for (const meeting of section.meetings) buildings.add(meeting.buildingId);
+      }
+    }
+    const places = [...buildings];
+    const pairs: { from: BuildingId; to: BuildingId }[] = [];
+    for (let i = 0; i < places.length; i += 1) {
+      for (let j = i + 1; j < places.length; j += 1) pairs.push({ from: places[i], to: places[j] });
+    }
+    if (pairs.length === 0) return;
+    let cancel = false;
+    void fetch("/api/walk", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pairs }),
+    })
+      .then((response) => response.json())
+      .then((body: { walks?: { from: BuildingId; to: BuildingId; minutes: number; source: "google" | "coordinate" }[] }) => {
+        if (cancel || !body.walks) return;
+        const next: Record<string, { minutes: number; source: "google" | "coordinate" }> = {};
+        for (const row of body.walks) {
+          const key = row.from < row.to ? `${row.from}|${row.to}` : `${row.to}|${row.from}`;
+          next[key] = { minutes: row.minutes, source: row.source };
+        }
+        setWalks(next);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancel = true;
+    };
+  }, [list]);
 
   const results = COURSES.filter((course) => {
     const haystack = `${course.code} ${course.title} ${course.department} ${course.sections.map((section) => section.instructor).join(" ")}`.toLowerCase();
@@ -161,7 +206,7 @@ export function ShopperApp() {
             <h1 className="text-2xl font-semibold">Shopper</h1>
           </div>
           <p className="max-w-sm text-right text-sm text-white/80">
-            {plan.chosen.length} in the week · {plan.weeklyWalkingMinutes} min walking
+            {paired ? "CAS paired" : "CAS not paired"} · {plan.chosen.length} in the week
             {plan.dropped.length > 0 ? ` · ${plan.dropped.length} left out` : ""}
           </p>
         </div>
@@ -190,39 +235,41 @@ export function ShopperApp() {
                 <option key={item}>{item}</option>
               ))}
             </select>
-            <ul className="mt-3 max-h-72 space-y-2 overflow-auto">
-              {results.map((course) => {
-                const added = ids.includes(course.id);
-                const open = openId === course.id;
-                const first = course.sections[0];
-                return (
-                  <li key={course.id} className="rounded-lg border border-[#eee6d8] p-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <button type="button" className="text-left" onClick={() => setOpenId(open ? null : course.id)}>
-                        <p className="font-medium">
-                          {course.code} <span className="font-normal text-[#5c564c]">{course.title}</span>
-                        </p>
-                        <p className="text-xs text-[#5c564c]">{first ? formatMeeting(first) : "Time unavailable"} · Capacity unknown</p>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => (added ? remove(course.id) : add(course.id))}
-                        className={`shrink-0 rounded-md px-2 py-1 text-sm ${added ? "bg-[#efe8dc] text-[#00356b]" : "bg-[#00356b] text-white"}`}
-                      >
-                        {added ? "Remove" : "Add"}
-                      </button>
-                    </div>
-                    {open ? (
-                      <ul className="mt-2 space-y-1 text-xs text-[#3d3832]">
+            {paired ? (
+              <ul className="mt-3 max-h-80 space-y-2 overflow-auto">
+                {results.map((course) => {
+                  const added = ids.includes(course.id);
+                  return (
+                    <li key={course.id} className="rounded-lg border border-[#eee6d8] p-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <button type="button" className="text-left" onClick={() => setToast(course)}>
+                          <p className="font-medium">
+                            {course.code} <span className="font-normal text-[#5c564c]">{course.title}</span>
+                          </p>
+                          <p className="text-xs text-[#00356b]">{course.department} · {course.major} · {course.distributional}</p>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => (added ? remove(course.id) : add(course.id))}
+                          className={`shrink-0 rounded-md px-2 py-1 text-sm ${added ? "bg-[#efe8dc] text-[#00356b]" : "bg-[#00356b] text-white"}`}
+                        >
+                          {added ? "Remove" : "Add"}
+                        </button>
+                      </div>
+                      <ul className="mt-1 space-y-1 text-xs text-[#3d3832]">
                         {course.sections.map((section) => (
-                          <li key={section.id}>Section {section.label}: {formatMeeting(section)} · Capacity unknown</li>
+                          <li key={section.id}>
+                            Section {section.label} · {section.instructor} · {formatMeeting(section)} · {BUILDINGS[section.meetings[0].buildingId].name} · Capacity unknown
+                          </li>
                         ))}
                       </ul>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="mt-3 text-sm">Pair CAS to search courses you can add.</p>
+            )}
           </div>
 
           <div className="rounded-xl border border-[#e4dccb] bg-white p-3">
@@ -232,19 +279,16 @@ export function ShopperApp() {
                 <button type="button" className="text-sm text-[#00356b] underline" onClick={() => void copyLink()}>
                   Copy share link
                 </button>
-                <button type="button" className="text-sm text-[#00356b] underline" onClick={() => setIds(DEFAULT_LIST)}>
-                  Reset sample
-                </button>
               </div>
             </div>
-            <p className="mt-1 text-xs text-[#5c564c]">Higher in the list is kept first when a time conflict is unavoidable.</p>
+            <p className="mt-1 text-xs text-[#5c564c]">The list starts empty. Higher courses stay when a walk is longer than 15 minutes.</p>
             {shareNote ? <p className="text-xs text-[#1f7a4d]">{shareNote}</p> : null}
             {list.length === 0 ? <p className="mt-3 text-sm">Add a course to build a week.</p> : null}
             <ol className="mt-3 space-y-2">
               {list.map((course, index) => {
                 const chosen = plan.chosen.find((item) => item.course.id === course.id);
-                const conflict = dropped.has(course.id);
-                const eventHits = chosen ? conflictingEvents(chosen.section, events) : [];
+                const conflict = dropped.get(course.id);
+                const eventHits = chosen ? conflictingEvents(chosen.section, events) : conflictingEvents(conflict?.section ?? course.sections[0], events);
                 return (
                   <li key={course.id} className={`rounded-lg border p-2 ${conflict || eventHits.length > 0 ? "border-[#9b2335] bg-[#fdf2f3]" : "border-[#eee6d8]"}`}>
                     <div className="flex items-start justify-between gap-2">
@@ -253,9 +297,10 @@ export function ShopperApp() {
                           {index + 1}. {course.code}
                         </p>
                         <p className="text-sm text-[#3d3832]">{course.title}</p>
+                        <p className="text-xs text-[#00356b]">{course.department} · {course.major} · {course.distributional}</p>
                         <p className="text-xs text-[#5c564c]">Capacity unknown</p>
                         {chosen ? <p className="text-xs text-[#1f7a4d]">Section {chosen.section.label}: {formatMeeting(chosen.section)}</p> : null}
-                        {conflict ? <p className="text-xs font-medium text-[#9b2335]">Conflict — left out of the optimized week</p> : null}
+                        {conflict ? <p className="text-xs font-medium text-[#9b2335]">{conflict.reason} ({walkSource}).</p> : null}
                         {eventHits.map((event) => (
                           <p key={event.id} className="text-xs font-medium text-[#9b2335]">Conflicts with {event.title}</p>
                         ))}
@@ -277,7 +322,7 @@ export function ShopperApp() {
               })}
             </ol>
           </div>
-          <CasPanel />
+          <CasPanel onPaired={setPaired} />
           <form
             className="rounded-xl border border-[#e4dccb] bg-white p-3"
             onSubmit={(event) => {
@@ -317,7 +362,7 @@ export function ShopperApp() {
         </section>
 
         <section className="space-y-4">
-          <Week plan={plan} events={events} />
+          <Week plan={plan} events={events} walkSource={walkSource} />
           <div className="rounded-xl border border-[#e4dccb] bg-white p-3">
             <h2 className="font-semibold">Campus map</h2>
             <p className="mt-1 text-xs text-[#5c564c]">
@@ -330,13 +375,14 @@ export function ShopperApp() {
               {plan.legs.length === 0 ? <li>Add two classes on the same day to see a walk.</li> : null}
               {plan.legs.map((leg) => (
                 <li key={`${leg.day}-${leg.from.section.id}-${leg.to.section.id}`}>
-                  {leg.day}: {leg.from.course.code} to {leg.to.course.code} · {leg.minutes} min
+                  {leg.day}: {leg.from.course.code} to {leg.to.course.code} · {leg.minutes} min · {walkSource}
                 </li>
               ))}
             </ul>
           </div>
         </section>
       </main>
+      {toast ? <CourseToast course={toast} onClose={() => setToast(null)} /> : null}
       {undo ? (
         <div className="fixed bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-[#00356b] px-4 py-2 text-sm text-white shadow-lg">
           <span>Removed {undo.code}</span>
@@ -349,7 +395,7 @@ export function ShopperApp() {
   );
 }
 
-function Week({ plan, events }: { plan: Optimized; events: ManualEvent[] }) {
+function Week({ plan, events, walkSource }: { plan: Optimized; events: ManualEvent[]; walkSource: string }) {
   const hours = [];
   for (let minute = START; minute < END; minute += 60) hours.push(minute);
 
@@ -361,7 +407,10 @@ function Week({ plan, events }: { plan: Optimized; events: ManualEvent[] }) {
           type="button"
           className="rounded-md bg-[#00356b] px-3 py-1.5 text-sm text-white"
           onClick={() => {
-            const blob = new Blob([scheduleToIcs(plan.chosen, plan.legs)], { type: "text/calendar" });
+            const blob = new Blob(
+              [scheduleToIcs(plan.chosen, plan.legs, events, plan.dropped.map((item) => ({ course: item.course, section: item.section })))],
+              { type: "text/calendar" },
+            );
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
             link.href = url;
@@ -373,7 +422,6 @@ function Week({ plan, events }: { plan: Optimized; events: ManualEvent[] }) {
           Export .ics
         </button>
       </div>
-      <p className="text-sm text-[#5c564c]">{plan.weeklyWalkingMinutes} minutes of walking between classes. The file adds that walk as a buffer before class.</p>
       <div className="mt-3 min-w-[720px]">
         <div className="grid grid-cols-[52px_repeat(5,1fr)] text-xs font-medium text-[#5c564c]">
           <div />
@@ -392,7 +440,7 @@ function Week({ plan, events }: { plan: Optimized; events: ManualEvent[] }) {
             ))}
           </div>
           {DAYS.map((day) => (
-            <DayColumn key={day} day={day} plan={plan} events={events} />
+            <DayColumn key={day} day={day} plan={plan} events={events} walkSource={walkSource} />
           ))}
         </div>
       </div>
@@ -400,58 +448,105 @@ function Week({ plan, events }: { plan: Optimized; events: ManualEvent[] }) {
   );
 }
 
-function DayColumn({ day, plan, events }: { day: Day; plan: Optimized; events: ManualEvent[] }) {
+function DayColumn({ day, plan, events, walkSource }: { day: Day; plan: Optimized; events: ManualEvent[]; walkSource: string }) {
+  const boxes: { key: string; start: number; end: number; title: string; detail: string; color: string; outline?: string }[] = [];
+  events
+    .filter((event) => event.day === day)
+    .forEach((event) => {
+      boxes.push({
+        key: event.id,
+        start: parseMinutes(event.start),
+        end: parseMinutes(event.end),
+        title: event.title,
+        detail: "Commitment",
+        color: "#6b655c",
+      });
+    });
+  plan.chosen.forEach((item, index) => {
+    item.section.meetings
+      .filter((meeting) => meeting.days.includes(day))
+      .forEach((meeting) => {
+        const hits = conflictingEvents(item.section, events);
+        const leg = plan.legs.find((itemLeg) => itemLeg.day === day && itemLeg.to.section.id === item.section.id);
+        boxes.push({
+          key: `${item.section.id}-${day}`,
+          start: parseMinutes(meeting.start),
+          end: parseMinutes(meeting.end),
+          title: item.course.code,
+          detail: leg ? `${leg.minutes} min from ${leg.from.course.code} · ${walkSource}` : hits[0] ? `Conflicts with ${hits[0].title}` : meeting.room,
+          color: colorFor(index),
+          outline: hits.length > 0 ? "2px solid #9b2335" : undefined,
+        });
+      });
+  });
+  const placed = placeSideBySide(boxes);
   return (
     <div className="relative border-l border-[#eee6d8]">
-      {events
-        .filter((event) => event.day === day)
-        .map((event) => {
-          const start = parseMinutes(event.start);
-          const end = parseMinutes(event.end);
-          return (
-            <div
-              key={event.id}
-              className="absolute inset-x-1 overflow-hidden rounded-md bg-[#6b655c] px-1 py-0.5 text-[11px] text-white"
-              style={{ top: ((start - START) / 60) * HOUR, height: Math.max(18, ((end - start) / 60) * HOUR - 2) }}
-            >
-              {event.title}
-            </div>
-          );
-        })}
-      {plan.chosen.flatMap((item, index) =>
-        item.section.meetings
-          .filter((meeting) => meeting.days.includes(day))
-          .map((meeting) => {
-            const start = parseMinutes(meeting.start);
-            const end = parseMinutes(meeting.end);
-            const hits = conflictingEvents(item.section, events);
-            const walk = plan.legs.find((leg) => leg.day === day && leg.to.section.id === item.section.id);
-            return (
-              <div key={`${item.section.id}-${day}`}>
-                {walk && walk.minutes > 0 ? (
-                  <div
-                    className="absolute inset-x-1 overflow-hidden rounded-sm bg-[#d9e3f0] px-1 text-[10px] text-[#00356b]"
-                    style={{ top: ((start - walk.minutes - START) / 60) * HOUR, height: Math.max(14, (walk.minutes / 60) * HOUR - 1) }}
-                  >
-                    {walk.minutes} min walk
-                  </div>
-                ) : null}
-                <div
-                  className="absolute inset-x-1 overflow-hidden rounded-md px-1 py-0.5 text-[11px] leading-tight text-white"
-                  style={{
-                    top: ((start - START) / 60) * HOUR,
-                    height: Math.max(22, ((end - start) / 60) * HOUR - 2),
-                    background: colorFor(index),
-                    outline: hits.length > 0 ? "2px solid #9b2335" : undefined,
-                  }}
-                >
-                  <div className="font-semibold">{item.course.code}</div>
-                  <div>{hits.length > 0 ? `Conflicts with ${hits[0].title}` : meeting.room}</div>
-                </div>
-              </div>
-            );
-          }),
-      )}
+      {placed.map((box) => (
+        <div
+          key={box.key}
+          className="absolute overflow-hidden rounded-md px-1 py-0.5 text-[11px] leading-tight text-white"
+          style={{
+            top: ((box.start - START) / 60) * HOUR,
+            height: Math.max(28, ((box.end - box.start) / 60) * HOUR - 2),
+            left: `calc(${(box.col / box.columns) * 100}% + 2px)`,
+            width: `calc(${100 / box.columns}% - 4px)`,
+            background: box.color,
+            outline: box.outline,
+          }}
+        >
+          <div className="font-semibold">{box.title}</div>
+          <div>{box.detail}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function placeSideBySide<T extends { start: number; end: number }>(items: T[]) {
+  const sorted = [...items].sort((a, b) => a.start - b.start || a.end - b.end);
+  const columnEnds: number[] = [];
+  const assigned = sorted.map((item) => {
+    let col = columnEnds.findIndex((end) => end <= item.start);
+    if (col < 0) {
+      col = columnEnds.length;
+      columnEnds.push(item.end);
+    } else {
+      columnEnds[col] = item.end;
+    }
+    return { ...item, col };
+  });
+  return assigned.map((item) => {
+    const cluster = assigned.filter((other) => other.start < item.end && item.start < other.end);
+    const columns = Math.max(...cluster.map((other) => other.col + 1), 1);
+    return { ...item, columns };
+  });
+}
+
+function CourseToast({ course, onClose }: { course: Course; onClose: () => void }) {
+  const meeting = course.sections[0]?.meetings[0];
+  const pins = meeting
+    ? [{ id: course.id, buildingId: meeting.buildingId, label: course.code, detail: formatMeeting(course.sections[0]) }]
+    : [];
+  return (
+    <div className="fixed bottom-16 left-1/2 z-30 w-[min(420px,92vw)] -translate-x-1/2 rounded-xl border border-[#e4dccb] bg-white p-3 shadow-lg">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-semibold">{course.code} · {course.title}</p>
+          <p className="text-xs text-[#00356b]">{course.department} · {course.major} · {course.distributional}</p>
+        </div>
+        <button type="button" className="text-sm underline" onClick={onClose}>Close</button>
+      </div>
+      <ul className="mt-2 space-y-1 text-xs">
+        {course.sections.map((section) => (
+          <li key={section.id}>
+            Section {section.label} · {section.instructor} · {formatMeeting(section)} · {BUILDINGS[section.meetings[0].buildingId].name}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-2 h-40 overflow-hidden rounded-lg">
+        <CampusMap pins={pins} legs={[]} />
+      </div>
     </div>
   );
 }

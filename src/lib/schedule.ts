@@ -23,10 +23,15 @@ export type ManualEvent = {
   end: string;
 };
 
+export const WALK_BUFFER_MINUTES = 15;
+
+export type WalkFn = (from: BuildingId, to: BuildingId) => number;
+
+export type Dropped = { course: Course; section: Section; reason: string };
+
 export type Optimized = {
   chosen: Chosen[];
-  dropped: Course[];
-  weeklyWalkingMinutes: number;
+  dropped: Dropped[];
   legs: Leg[];
 };
 
@@ -124,7 +129,7 @@ export function weeklyWalking(chosen: Chosen[]): number {
   return legsOf(chosen).reduce((sum, leg) => sum + leg.minutes, 0);
 }
 
-export function legsOf(chosen: Chosen[]): Leg[] {
+export function legsOf(chosen: Chosen[], walk: WalkFn = walkingMinutes): Leg[] {
   const legs: Leg[] = [];
   const byDay = new Map<Day, Placed[]>();
   for (const row of placed(chosen)) {
@@ -138,86 +143,61 @@ export function legsOf(chosen: Chosen[]): Leg[] {
       const previous = rows[i - 1];
       const next = rows[i];
       if (previous.chosen.course.id === next.chosen.course.id) continue;
+      if (previous.end > next.start) continue;
       legs.push({
         day,
         from: previous.chosen,
         to: next.chosen,
-        minutes: walkingMinutes(previous.buildingId, next.buildingId),
+        minutes: walk(previous.buildingId, next.buildingId),
       });
     }
   }
   return legs;
 }
 
-function conflictsWith(chosen: Chosen[], section: Section): boolean {
-  return chosen.some((item) => sectionsOverlap(item.section, section));
-}
-
-export function optimize(courses: Course[]): Optimized {
-  if (courses.length === 0) {
-    return { chosen: [], dropped: [], weeklyWalkingMinutes: 0, legs: [] };
-  }
-
-  const chosen = courses.length > 8 ? greedy(courses) : search(courses);
-  const chosenIds = new Set(chosen.map((item) => item.course.id));
-  return {
-    chosen,
-    dropped: courses.filter((course) => !chosenIds.has(course.id)),
-    weeklyWalkingMinutes: weeklyWalking(chosen),
-    legs: legsOf(chosen),
-  };
-}
-
-function search(courses: Course[]): Chosen[] {
-  let bestChosen: Chosen[] = [];
-  let bestScore = Number.POSITIVE_INFINITY;
-  const current: Chosen[] = [];
-
-  function scoreOf(pick: Chosen[]): number {
-    const ids = new Set(pick.map((item) => item.course.id));
-    let drop = 0;
-    courses.forEach((course, index) => {
-      if (!ids.has(course.id)) drop += 1000 - index;
-    });
-    return drop * 100 + weeklyWalking(pick);
-  }
-
-  function dfs(index: number) {
-    if (index === courses.length) {
-      const score = scoreOf(current);
-      if (score < bestScore) {
-        bestScore = score;
-        bestChosen = current.slice();
-      }
-      return;
+function sharedDayWalk(a: Section, b: Section, walk: WalkFn): { minutes: number; from: BuildingId; to: BuildingId } | null {
+  let worst: { minutes: number; from: BuildingId; to: BuildingId } | null = null;
+  for (const left of a.meetings) {
+    for (const right of b.meetings) {
+      if (!left.days.some((day) => right.days.includes(day))) continue;
+      const minutes = walk(left.buildingId, right.buildingId);
+      if (!worst || minutes > worst.minutes) worst = { minutes, from: left.buildingId, to: right.buildingId };
     }
-    const course = courses[index];
-    for (const section of course.sections) {
-      if (!conflictsWith(current, section)) {
-        current.push({ course, section });
-        dfs(index + 1);
-        current.pop();
-      }
-    }
-    dfs(index + 1);
   }
-
-  dfs(0);
-  return bestChosen;
+  return worst;
 }
 
-function greedy(courses: Course[]): Chosen[] {
+export function optimize(courses: Course[], events: ManualEvent[] = [], walk: WalkFn = walkingMinutes): Optimized {
   const chosen: Chosen[] = [];
+  const dropped: Dropped[] = [];
   for (const course of courses) {
-    let best: { section: Section; walk: number } | null = null;
-    for (const section of course.sections) {
-      if (conflictsWith(chosen, section)) continue;
-      const walk = weeklyWalking([...chosen, { course, section }]);
-      if (!best || walk < best.walk) best = { section, walk };
+    const ranked = course.sections
+      .map((section) => {
+        const block = chosen
+          .map((item) => sharedDayWalk(item.section, section, walk))
+          .filter((item): item is NonNullable<typeof item> => Boolean(item && item.minutes > WALK_BUFFER_MINUTES));
+        const eventHits = conflictingEvents(section, events).length;
+        return { section, block, eventHits };
+      })
+      .sort((a, b) => a.block.length - b.block.length || a.eventHits - b.eventHits);
+    const best = ranked[0];
+    if (!best) continue;
+    if (best.block.length > 0) {
+      const hit = best.block[0];
+      const other = chosen.find((item) => {
+        const walkHit = sharedDayWalk(item.section, best.section, walk);
+        return walkHit && walkHit.minutes > WALK_BUFFER_MINUTES;
+      });
+      dropped.push({
+        course,
+        section: best.section,
+        reason: `Walk from ${other?.course.code ?? "the previous class"} to ${course.code} is ${hit.minutes} min, longer than the 15-minute buffer`,
+      });
+      continue;
     }
-    if (best) chosen.push({ course, section: best.section });
+    chosen.push({ course, section: best.section });
   }
-  return chosen;
+  return { chosen, dropped, legs: legsOf(chosen, walk) };
 }
 
 export function conflictingEvents(section: Section, events: ManualEvent[]): ManualEvent[] {

@@ -1,5 +1,5 @@
 import { BUILDINGS, type Day } from "@/data/courses";
-import { parseMinutes, type Chosen, type Leg } from "@/lib/schedule";
+import { parseMinutes, type Chosen, type Leg, type ManualEvent } from "@/lib/schedule";
 
 const DAY_INDEX: Record<Day, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4 };
 
@@ -27,10 +27,16 @@ function text(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
 }
 
-export function scheduleToIcs(chosen: Chosen[], legs: Leg[], from = new Date()): string {
+export function scheduleToIcs(
+  chosen: Chosen[],
+  legs: Leg[],
+  commitments: ManualEvent[] = [],
+  conflicts: Chosen[] = [],
+  from = new Date(),
+): string {
   const monday = mondayOf(from);
   const events: string[] = [];
-  for (const item of chosen) {
+  for (const item of [...chosen, ...conflicts]) {
     for (const meeting of item.section.meetings) {
       for (const day of meeting.days) {
         const start = parseMinutes(meeting.start);
@@ -65,6 +71,21 @@ export function scheduleToIcs(chosen: Chosen[], legs: Leg[], from = new Date()):
         );
       }
     }
+  }
+  for (const commitment of commitments) {
+    const start = parseMinutes(commitment.start);
+    const end = parseMinutes(commitment.end);
+    events.push(
+      [
+        "BEGIN:VEVENT",
+        `UID:commitment-${commitment.id}@shopper`,
+        `DTSTART;TZID=America/New_York:${stamp(monday, commitment.day, start)}`,
+        `DTEND;TZID=America/New_York:${stamp(monday, commitment.day, end)}`,
+        "RRULE:FREQ=WEEKLY;COUNT=12",
+        `SUMMARY:${text(`Shopper – ${commitment.title}`)}`,
+        "END:VEVENT",
+      ].join("\r\n"),
+    );
   }
   return [
     "BEGIN:VCALENDAR",
