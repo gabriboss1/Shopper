@@ -1,5 +1,9 @@
 # Shopper
 
+![Grokathon proof](docs/grokathon-proof.png)
+
+Grokathon proof
+
 Shopper builds a conflict-free Yale shopping-period week and estimates walking time between buildings from campus coordinates.
 
 The course list is mock data so the app runs without Yale Course Search or CourseTable. Section capacity is not invented.
