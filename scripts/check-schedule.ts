@@ -23,6 +23,7 @@ assert(walkingMinutes("wlh", "wlh") === 0, "same building is zero");
 
 const kept = optimize([cpsc, psyc], [], () => 5);
 assert(kept.chosen.length === 2 && kept.dropped.length === 0, "short walk keeps both, including a time overlap");
+assert(kept.legs.some((leg) => leg.minutes === 5), "an overlapping pair still shows its own walk");
 
 const leftOut = optimize([cpsc, psyc], [], () => 20);
 assert(leftOut.chosen.length === 1 && leftOut.dropped.length === 1, "walk over 15 minutes leaves one out");

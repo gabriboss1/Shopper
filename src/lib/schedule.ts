@@ -143,7 +143,6 @@ export function legsOf(chosen: Chosen[], walk: WalkFn = walkingMinutes): Leg[] {
       const previous = rows[i - 1];
       const next = rows[i];
       if (previous.chosen.course.id === next.chosen.course.id) continue;
-      if (previous.end > next.start) continue;
       legs.push({
         day,
         from: previous.chosen,
