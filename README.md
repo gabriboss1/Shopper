@@ -1,4 +1,4 @@
-VIDEO: https://drive.google.com/file/d/1G9QzDUVkWy7KfKA5IOuzLb4WpGqJ4Ced/view?usp=sharing
+VIDEO: https://drive.google.com/file/d/1_2QUheRIqk0F_jgIcvYAQkO0jT-njlPK/view?usp=sharing
 
 # Shopper
 
