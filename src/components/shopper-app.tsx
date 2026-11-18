@@ -29,15 +29,25 @@ export function ShopperApp() {
   const [eventStart, setEventStart] = useState("15:00");
   const [eventEnd, setEventEnd] = useState("16:30");
   const [eventNote, setEventNote] = useState("");
+  const [undo, setUndo] = useState<{ id: string; index: number; code: string } | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [shareNote, setShareNote] = useState("");
+  const undoTimer = useState<{ id: number | null }>({ id: null })[0];
 
   useEffect(() => {
-    const raw = localStorage.getItem("shopper-list");
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as string[];
-        if (Array.isArray(parsed)) setIds(parsed.filter((id) => getCourse(id)));
-      } catch {
-        /* keep the seeded list */
+    const shared = new URLSearchParams(window.location.search).get("list");
+    const sharedIds = shared?.split(",").filter((id) => getCourse(id)) ?? [];
+    if (sharedIds.length > 0) {
+      setIds(sharedIds);
+    } else {
+      const raw = localStorage.getItem("shopper-list");
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as string[];
+          if (Array.isArray(parsed)) setIds(parsed.filter((id) => getCourse(id)));
+        } catch {
+          /* keep the seeded list */
+        }
       }
     }
     setReady(true);
@@ -90,7 +100,37 @@ export function ShopperApp() {
   }
 
   function remove(id: string) {
-    setIds((current) => current.filter((item) => item !== id));
+    setIds((current) => {
+      const index = current.indexOf(id);
+      if (index < 0) return current;
+      if (undoTimer.id) window.clearTimeout(undoTimer.id);
+      undoTimer.id = window.setTimeout(() => setUndo(null), 8000);
+      setUndo({ id, index, code: getCourse(id)?.code ?? "Course" });
+      return current.filter((item) => item !== id);
+    });
+  }
+
+  function undoRemove() {
+    if (!undo) return;
+    if (undoTimer.id) window.clearTimeout(undoTimer.id);
+    setIds((current) => {
+      if (current.includes(undo.id)) return current;
+      const copy = current.slice();
+      copy.splice(Math.min(undo.index, copy.length), 0, undo.id);
+      return copy;
+    });
+    setUndo(null);
+  }
+
+  async function copyLink() {
+    const url = `${window.location.origin}/?list=${ids.join(",")}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareNote("Link copied");
+    } catch {
+      setShareNote(url);
+    }
+    window.setTimeout(() => setShareNote(""), 2000);
   }
 
   function move(id: string, direction: -1 | 1) {
@@ -153,15 +193,17 @@ export function ShopperApp() {
             <ul className="mt-3 max-h-72 space-y-2 overflow-auto">
               {results.map((course) => {
                 const added = ids.includes(course.id);
+                const open = openId === course.id;
+                const first = course.sections[0];
                 return (
                   <li key={course.id} className="rounded-lg border border-[#eee6d8] p-2">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
+                      <button type="button" className="text-left" onClick={() => setOpenId(open ? null : course.id)}>
                         <p className="font-medium">
                           {course.code} <span className="font-normal text-[#5c564c]">{course.title}</span>
                         </p>
-                        <p className="text-xs text-[#5c564c]">Capacity unknown</p>
-                      </div>
+                        <p className="text-xs text-[#5c564c]">{first ? formatMeeting(first) : "Time unavailable"} · Capacity unknown</p>
+                      </button>
                       <button
                         type="button"
                         onClick={() => (added ? remove(course.id) : add(course.id))}
@@ -170,6 +212,13 @@ export function ShopperApp() {
                         {added ? "Remove" : "Add"}
                       </button>
                     </div>
+                    {open ? (
+                      <ul className="mt-2 space-y-1 text-xs text-[#3d3832]">
+                        {course.sections.map((section) => (
+                          <li key={section.id}>Section {section.label}: {formatMeeting(section)} · Capacity unknown</li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </li>
                 );
               })}
@@ -179,11 +228,17 @@ export function ShopperApp() {
           <div className="rounded-xl border border-[#e4dccb] bg-white p-3">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">Shopping list</h2>
-              <button type="button" className="text-sm text-[#00356b] underline" onClick={() => setIds(DEFAULT_LIST)}>
-                Reset sample
-              </button>
+              <div className="flex gap-3">
+                <button type="button" className="text-sm text-[#00356b] underline" onClick={() => void copyLink()}>
+                  Copy share link
+                </button>
+                <button type="button" className="text-sm text-[#00356b] underline" onClick={() => setIds(DEFAULT_LIST)}>
+                  Reset sample
+                </button>
+              </div>
             </div>
             <p className="mt-1 text-xs text-[#5c564c]">Higher in the list is kept first when a time conflict is unavoidable.</p>
+            {shareNote ? <p className="text-xs text-[#1f7a4d]">{shareNote}</p> : null}
             {list.length === 0 ? <p className="mt-3 text-sm">Add a course to build a week.</p> : null}
             <ol className="mt-3 space-y-2">
               {list.map((course, index) => {
@@ -282,6 +337,14 @@ export function ShopperApp() {
           </div>
         </section>
       </main>
+      {undo ? (
+        <div className="fixed bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-[#00356b] px-4 py-2 text-sm text-white shadow-lg">
+          <span>Removed {undo.code}</span>
+          <button type="button" className="underline" onClick={undoRemove}>
+            Undo
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
