@@ -13,6 +13,9 @@ Shopper is a Yale shopping-period planner that turns a messy course list into a 
 # To Run:
 
 git clone https://github.com/gabriboss1/Shopper.git
+
 cd Shopper
+
 npm ci
+
 npm run dev
