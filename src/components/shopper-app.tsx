@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { DAYS, COURSES, DEFAULT_LIST, getCourse, type Course, type Day } from "@/data/courses";
 import { formatMeeting, formatMinutes, optimize, parseMinutes, type Optimized } from "@/lib/schedule";
 import { colorFor, type MapPin } from "@/components/campus-map";
+import { CasPanel } from "@/components/cas-panel";
 
 const CampusMap = dynamic(() => import("@/components/campus-map").then((mod) => mod.CampusMap), {
   ssr: false,
@@ -185,6 +186,7 @@ export function ShopperApp() {
               })}
             </ol>
           </div>
+          <CasPanel />
         </section>
 
         <section className="space-y-4">

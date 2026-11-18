@@ -1,10 +1,10 @@
 {
-  "name": "shoppath-tmp",
+  "name": "shopper",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
+    "build": "next build && node scripts/migrate.mjs",
     "start": "next start",
     "lint": "eslint"
   },
