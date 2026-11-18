@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { DAYS, COURSES, DEFAULT_LIST, getCourse, type Course, type Day } from "@/data/courses";
-import { formatMeeting, formatMinutes, optimize, parseMinutes, type Optimized } from "@/lib/schedule";
+import { conflictingEvents, formatMeeting, formatMinutes, optimize, parseMinutes, type ManualEvent, type Optimized } from "@/lib/schedule";
+import { scheduleToIcs } from "@/lib/ics";
 import { colorFor, type MapPin } from "@/components/campus-map";
 import { CasPanel } from "@/components/cas-panel";
 
@@ -21,6 +22,13 @@ export function ShopperApp() {
   const [department, setDepartment] = useState("All");
   const [ids, setIds] = useState<string[]>(DEFAULT_LIST);
   const [ready, setReady] = useState(false);
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [events, setEvents] = useState<ManualEvent[]>([]);
+  const [eventTitle, setEventTitle] = useState("");
+  const [eventDay, setEventDay] = useState<Day>("Tue");
+  const [eventStart, setEventStart] = useState("15:00");
+  const [eventEnd, setEventEnd] = useState("16:30");
+  const [eventNote, setEventNote] = useState("");
 
   useEffect(() => {
     const raw = localStorage.getItem("shopper-list");
@@ -33,6 +41,18 @@ export function ShopperApp() {
       }
     }
     setReady(true);
+    let current = localStorage.getItem("shopper-profile");
+    if (!current) {
+      current = crypto.randomUUID();
+      localStorage.setItem("shopper-profile", current);
+    }
+    setProfileId(current);
+    void fetch(`/api/events?profileId=${current}`)
+      .then((response) => response.json())
+      .then((body: { events?: ManualEvent[] }) => {
+        if (Array.isArray(body.events)) setEvents(body.events);
+      })
+      .catch(() => setEventNote("Calendar events are unavailable."));
   }, []);
 
   useEffect(() => {
@@ -53,6 +73,17 @@ export function ShopperApp() {
     const matchesDept = department === "All" || course.department === department;
     return matchesText && matchesDept;
   });
+
+  async function saveEvents(next: ManualEvent[]) {
+    setEvents(next);
+    if (!profileId) return;
+    const response = await fetch("/api/events", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId, events: next }),
+    });
+    setEventNote(response.ok ? "Events stored encrypted." : "Could not store events.");
+  }
 
   function add(id: string) {
     setIds((current) => (current.includes(id) ? current : [...current, id]));
@@ -129,7 +160,7 @@ export function ShopperApp() {
                         <p className="font-medium">
                           {course.code} <span className="font-normal text-[#5c564c]">{course.title}</span>
                         </p>
-                        <p className="text-xs text-[#5c564c]">{course.sections.length} section{course.sections.length === 1 ? "" : "s"}</p>
+                        <p className="text-xs text-[#5c564c]">Capacity unknown</p>
                       </div>
                       <button
                         type="button"
@@ -158,16 +189,21 @@ export function ShopperApp() {
               {list.map((course, index) => {
                 const chosen = plan.chosen.find((item) => item.course.id === course.id);
                 const conflict = dropped.has(course.id);
+                const eventHits = chosen ? conflictingEvents(chosen.section, events) : [];
                 return (
-                  <li key={course.id} className={`rounded-lg border p-2 ${conflict ? "border-[#9b2335] bg-[#fdf2f3]" : "border-[#eee6d8]"}`}>
+                  <li key={course.id} className={`rounded-lg border p-2 ${conflict || eventHits.length > 0 ? "border-[#9b2335] bg-[#fdf2f3]" : "border-[#eee6d8]"}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="font-medium">
                           {index + 1}. {course.code}
                         </p>
                         <p className="text-sm text-[#3d3832]">{course.title}</p>
+                        <p className="text-xs text-[#5c564c]">Capacity unknown</p>
                         {chosen ? <p className="text-xs text-[#1f7a4d]">Section {chosen.section.label}: {formatMeeting(chosen.section)}</p> : null}
                         {conflict ? <p className="text-xs font-medium text-[#9b2335]">Conflict — left out of the optimized week</p> : null}
+                        {eventHits.map((event) => (
+                          <p key={event.id} className="text-xs font-medium text-[#9b2335]">Conflicts with {event.title}</p>
+                        ))}
                       </div>
                       <div className="flex flex-col gap-1">
                         <button type="button" aria-label={`Move ${course.code} up`} className="rounded border px-2 text-xs" onClick={() => move(course.id, -1)}>
@@ -187,10 +223,46 @@ export function ShopperApp() {
             </ol>
           </div>
           <CasPanel />
+          <form
+            className="rounded-xl border border-[#e4dccb] bg-white p-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const title = eventTitle.trim();
+              if (!title || eventStart >= eventEnd) {
+                setEventNote("Give the event a name and an end time after the start.");
+                return;
+              }
+              void saveEvents([...events, { id: crypto.randomUUID(), title, day: eventDay, start: eventStart, end: eventEnd }]);
+              setEventTitle("");
+            }}
+          >
+            <h2 className="font-semibold">Your commitments</h2>
+            <p className="mt-1 text-xs text-[#5c564c]">Add a class, practice, or job. Google and Outlook are not connected. Overlaps are marked on the list.</p>
+            <input value={eventTitle} onChange={(event) => setEventTitle(event.target.value)} placeholder="Event name" aria-label="Event name" className="mt-2 w-full rounded-lg border border-[#d9d0c1] px-3 py-2" />
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <select aria-label="Event day" value={eventDay} onChange={(event) => setEventDay(event.target.value as Day)} className="rounded-lg border border-[#d9d0c1] px-2 py-2">
+                {DAYS.map((day) => (
+                  <option key={day}>{day}</option>
+                ))}
+              </select>
+              <input aria-label="Event start" type="time" value={eventStart} onChange={(event) => setEventStart(event.target.value)} className="rounded-lg border border-[#d9d0c1] px-2 py-2" />
+              <input aria-label="Event end" type="time" value={eventEnd} onChange={(event) => setEventEnd(event.target.value)} className="rounded-lg border border-[#d9d0c1] px-2 py-2" />
+            </div>
+            <button type="submit" className="mt-2 rounded-md bg-[#00356b] px-3 py-2 text-sm text-white">Add event</button>
+            <ul className="mt-2 space-y-1 text-sm">
+              {events.map((item) => (
+                <li key={item.id} className="flex items-center justify-between gap-2">
+                  <span>{item.title} · {item.day} {item.start}–{item.end}</span>
+                  <button type="button" className="text-xs underline" onClick={() => void saveEvents(events.filter((event) => event.id !== item.id))}>Remove</button>
+                </li>
+              ))}
+            </ul>
+            {eventNote ? <p className="mt-2 text-xs">{eventNote}</p> : null}
+          </form>
         </section>
 
         <section className="space-y-4">
-          <Week plan={plan} />
+          <Week plan={plan} events={events} />
           <div className="rounded-xl border border-[#e4dccb] bg-white p-3">
             <h2 className="font-semibold">Campus map</h2>
             <p className="mt-1 text-xs text-[#5c564c]">
@@ -214,14 +286,31 @@ export function ShopperApp() {
   );
 }
 
-function Week({ plan }: { plan: Optimized }) {
+function Week({ plan, events }: { plan: Optimized; events: ManualEvent[] }) {
   const hours = [];
   for (let minute = START; minute < END; minute += 60) hours.push(minute);
 
   return (
     <div className="overflow-x-auto rounded-xl border border-[#e4dccb] bg-white p-3">
-      <h2 className="font-semibold">Optimized week</h2>
-      <p className="text-sm text-[#5c564c]">{plan.weeklyWalkingMinutes} minutes of walking between classes.</p>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold">Optimized week</h2>
+        <button
+          type="button"
+          className="rounded-md bg-[#00356b] px-3 py-1.5 text-sm text-white"
+          onClick={() => {
+            const blob = new Blob([scheduleToIcs(plan.chosen, plan.legs)], { type: "text/calendar" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "shopper.ics";
+            link.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          Export .ics
+        </button>
+      </div>
+      <p className="text-sm text-[#5c564c]">{plan.weeklyWalkingMinutes} minutes of walking between classes. The file adds that walk as a buffer before class.</p>
       <div className="mt-3 min-w-[720px]">
         <div className="grid grid-cols-[52px_repeat(5,1fr)] text-xs font-medium text-[#5c564c]">
           <div />
@@ -240,7 +329,7 @@ function Week({ plan }: { plan: Optimized }) {
             ))}
           </div>
           {DAYS.map((day) => (
-            <DayColumn key={day} day={day} plan={plan} />
+            <DayColumn key={day} day={day} plan={plan} events={events} />
           ))}
         </div>
       </div>
@@ -248,27 +337,54 @@ function Week({ plan }: { plan: Optimized }) {
   );
 }
 
-function DayColumn({ day, plan }: { day: Day; plan: Optimized }) {
+function DayColumn({ day, plan, events }: { day: Day; plan: Optimized; events: ManualEvent[] }) {
   return (
     <div className="relative border-l border-[#eee6d8]">
+      {events
+        .filter((event) => event.day === day)
+        .map((event) => {
+          const start = parseMinutes(event.start);
+          const end = parseMinutes(event.end);
+          return (
+            <div
+              key={event.id}
+              className="absolute inset-x-1 overflow-hidden rounded-md bg-[#6b655c] px-1 py-0.5 text-[11px] text-white"
+              style={{ top: ((start - START) / 60) * HOUR, height: Math.max(18, ((end - start) / 60) * HOUR - 2) }}
+            >
+              {event.title}
+            </div>
+          );
+        })}
       {plan.chosen.flatMap((item, index) =>
         item.section.meetings
           .filter((meeting) => meeting.days.includes(day))
           .map((meeting) => {
             const start = parseMinutes(meeting.start);
             const end = parseMinutes(meeting.end);
+            const hits = conflictingEvents(item.section, events);
+            const walk = plan.legs.find((leg) => leg.day === day && leg.to.section.id === item.section.id);
             return (
-              <div
-                key={`${item.section.id}-${day}`}
-                className="absolute inset-x-1 overflow-hidden rounded-md px-1 py-0.5 text-[11px] leading-tight text-white"
-                style={{
-                  top: ((start - START) / 60) * HOUR,
-                  height: Math.max(22, ((end - start) / 60) * HOUR - 2),
-                  background: colorFor(index),
-                }}
-              >
-                <div className="font-semibold">{item.course.code}</div>
-                <div>{meeting.room}</div>
+              <div key={`${item.section.id}-${day}`}>
+                {walk && walk.minutes > 0 ? (
+                  <div
+                    className="absolute inset-x-1 overflow-hidden rounded-sm bg-[#d9e3f0] px-1 text-[10px] text-[#00356b]"
+                    style={{ top: ((start - walk.minutes - START) / 60) * HOUR, height: Math.max(14, (walk.minutes / 60) * HOUR - 1) }}
+                  >
+                    {walk.minutes} min walk
+                  </div>
+                ) : null}
+                <div
+                  className="absolute inset-x-1 overflow-hidden rounded-md px-1 py-0.5 text-[11px] leading-tight text-white"
+                  style={{
+                    top: ((start - START) / 60) * HOUR,
+                    height: Math.max(22, ((end - start) / 60) * HOUR - 2),
+                    background: colorFor(index),
+                    outline: hits.length > 0 ? "2px solid #9b2335" : undefined,
+                  }}
+                >
+                  <div className="font-semibold">{item.course.code}</div>
+                  <div>{hits.length > 0 ? `Conflicts with ${hits[0].title}` : meeting.room}</div>
+                </div>
               </div>
             );
           }),

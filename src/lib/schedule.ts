@@ -169,7 +169,8 @@ export function optimize(courses: Course[]): Optimized {
 }
 
 function search(courses: Course[]): Chosen[] {
-  let best: { chosen: Chosen[]; score: number } | null = null;
+  let bestChosen: Chosen[] = [];
+  let bestScore = Number.POSITIVE_INFINITY;
   const current: Chosen[] = [];
 
   function scoreOf(pick: Chosen[]): number {
@@ -184,7 +185,10 @@ function search(courses: Course[]): Chosen[] {
   function dfs(index: number) {
     if (index === courses.length) {
       const score = scoreOf(current);
-      if (!best || score < best.score) best = { chosen: current.slice(), score };
+      if (score < bestScore) {
+        bestScore = score;
+        bestChosen = current.slice();
+      }
       return;
     }
     const course = courses[index];
@@ -199,7 +203,7 @@ function search(courses: Course[]): Chosen[] {
   }
 
   dfs(0);
-  return best?.chosen ?? [];
+  return bestChosen;
 }
 
 function greedy(courses: Course[]): Chosen[] {
